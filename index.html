@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BTC vs XAU (Gold) — Daily Price</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0d0f14;
+      color: #e2e8f0;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 32px 16px;
+    }
+
+    h1 {
+      font-size: 1.4rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      color: #f1f5f9;
+      margin-bottom: 6px;
+    }
+
+    .subtitle {
+      font-size: 0.82rem;
+      color: #64748b;
+      margin-bottom: 28px;
+    }
+
+    .card {
+      background: #151820;
+      border: 1px solid #1e2330;
+      border-radius: 14px;
+      padding: 24px;
+      width: 100%;
+      max-width: 960px;
+      position: relative;
+    }
+
+    .controls {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      background: #1e2330;
+      border: 1px solid #2a3147;
+      color: #94a3b8;
+      padding: 5px 14px;
+      border-radius: 6px;
+      font-size: 0.78rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn:hover { background: #252d40; color: #e2e8f0; }
+    .btn.active { background: #1e3a5f; border-color: #2563eb; color: #93c5fd; }
+
+    .legend {
+      display: flex;
+      gap: 20px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.82rem;
+    }
+
+    .legend-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+    }
+
+    .legend-value {
+      color: #94a3b8;
+      font-size: 0.75rem;
+      margin-left: 4px;
+    }
+
+    .chart-wrap {
+      position: relative;
+      height: 420px;
+    }
+
+    #loader {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #151820;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      color: #475569;
+      z-index: 10;
+    }
+
+    .spinner {
+      width: 20px;
+      height: 20px;
+      border: 2px solid #1e2330;
+      border-top-color: #3b82f6;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-right: 10px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .error-msg {
+      color: #f87171;
+      font-size: 0.82rem;
+      margin-top: 8px;
+      display: none;
+    }
+
+    .footer {
+      margin-top: 16px;
+      font-size: 0.72rem;
+      color: #334155;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>BTC vs XAU Daily Price</h1>
+  <p class="subtitle">Source: Binance (BTCUSDT &amp; PAXGUSDT) &mdash; Close prices in USD</p>
+
+  <div class="card">
+    <div class="controls">
+      <button class="btn" data-days="30">30D</button>
+      <button class="btn" data-days="90">90D</button>
+      <button class="btn active" data-days="180">6M</button>
+      <button class="btn" data-days="365">1Y</button>
+      <button class="btn" data-days="0">All</button>
+    </div>
+
+    <div class="legend">
+      <div class="legend-item">
+        <div class="legend-dot" style="background:#f7931a"></div>
+        <span>Bitcoin (BTC)</span>
+        <span class="legend-value" id="btc-price">—</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-dot" style="background:#ffd700"></div>
+        <span>Gold (PAXG / XAU)</span>
+        <span class="legend-value" id="xau-price">—</span>
+      </div>
+    </div>
+
+    <div class="chart-wrap">
+      <div id="loader"><div class="spinner"></div> Loading data…</div>
+      <canvas id="chart"></canvas>
+    </div>
+    <p class="error-msg" id="error-msg"></p>
+  </div>
+
+  <p class="footer">Prices are daily close. BTC left axis &mdash; XAU right axis. Data from Binance public API.</p>
+
+<script>
+  const BTC_URL = 'https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=1000';
+  const XAU_URL = 'https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=1d&limit=1000';
+
+  let allBtc = [];
+  let allXau = [];
+  let chart = null;
+  let activeDays = 180;
+
+  async function fetchKlines(url) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    return data.map(k => ({ t: k[0], close: parseFloat(k[4]) }));
+  }
+
+  function filterByDays(data, days) {
+    if (!days) return data;
+    const cutoff = Date.now() - days * 86400000;
+    return data.filter(d => d.t >= cutoff);
+  }
+
+  function buildDatasets(days) {
+    const btc = filterByDays(allBtc, days);
+    const xau = filterByDays(allXau, days);
+    return {
+      btc: btc.map(d => ({ x: d.t, y: d.close })),
+      xau: xau.map(d => ({ x: d.t, y: d.close })),
+    };
+  }
+
+  function initChart(btcData, xauData) {
+    const ctx = document.getElementById('chart').getContext('2d');
+    chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        datasets: [
+          {
+            label: 'BTC (USD)',
+            data: btcData,
+            borderColor: '#f7931a',
+            backgroundColor: 'rgba(247,147,26,0.06)',
+            borderWidth: 2,
+            pointRadius: 0,
+            pointHoverRadius: 4,
+            tension: 0.2,
+            fill: true,
+            yAxisID: 'yBtc',
+          },
+          {
+            label: 'XAU/PAXG (USD)',
+            data: xauData,
+            borderColor: '#ffd700',
+            backgroundColor: 'rgba(255,215,0,0.04)',
+            borderWidth: 2,
+            pointRadius: 0,
+            pointHoverRadius: 4,
+            tension: 0.2,
+            fill: true,
+            yAxisID: 'yXau',
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: '#1e2330',
+            borderColor: '#2a3147',
+            borderWidth: 1,
+            titleColor: '#94a3b8',
+            bodyColor: '#e2e8f0',
+            padding: 12,
+            callbacks: {
+              title: items => {
+                const d = new Date(items[0].parsed.x);
+                return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+              },
+              label: item => {
+                const v = item.parsed.y;
+                return ` ${item.dataset.label}: $${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+              },
+            },
+          },
+        },
+        scales: {
+          x: {
+            type: 'time',
+            time: { unit: 'month', tooltipFormat: 'MMM d, yyyy' },
+            grid: { color: '#1a1f2e' },
+            ticks: { color: '#475569', maxTicksLimit: 10 },
+          },
+          yBtc: {
+            type: 'linear',
+            position: 'left',
+            grid: { color: '#1a1f2e' },
+            ticks: {
+              color: '#f7931a',
+              callback: v => '$' + (v >= 1000 ? (v / 1000).toFixed(0) + 'k' : v),
+            },
+            title: { display: true, text: 'BTC (USD)', color: '#f7931a', font: { size: 11 } },
+          },
+          yXau: {
+            type: 'linear',
+            position: 'right',
+            grid: { drawOnChartArea: false },
+            ticks: {
+              color: '#ffd700',
+              callback: v => '$' + v.toLocaleString('en-US', { maximumFractionDigits: 0 }),
+            },
+            title: { display: true, text: 'XAU (USD)', color: '#ffd700', font: { size: 11 } },
+          },
+        },
+      },
+    });
+  }
+
+  function updateChart(days) {
+    const { btc, xau } = buildDatasets(days);
+    chart.data.datasets[0].data = btc;
+    chart.data.datasets[1].data = xau;
+    chart.update('active');
+    updateLatestPrices();
+  }
+
+  function updateLatestPrices() {
+    if (allBtc.length) {
+      const last = allBtc[allBtc.length - 1].close;
+      document.getElementById('btc-price').textContent =
+        '$' + last.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+    if (allXau.length) {
+      const last = allXau[allXau.length - 1].close;
+      document.getElementById('xau-price').textContent =
+        '$' + last.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+  }
+
+  async function init() {
+    try {
+      [allBtc, allXau] = await Promise.all([fetchKlines(BTC_URL), fetchKlines(XAU_URL)]);
+      const { btc, xau } = buildDatasets(activeDays);
+      document.getElementById('loader').style.display = 'none';
+      initChart(btc, xau);
+      updateLatestPrices();
+    } catch (err) {
+      document.getElementById('loader').style.display = 'none';
+      const el = document.getElementById('error-msg');
+      el.textContent = 'Failed to load data: ' + err.message;
+      el.style.display = 'block';
+    }
+  }
+
+  document.querySelectorAll('.btn[data-days]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      activeDays = parseInt(btn.dataset.days, 10);
+      updateChart(activeDays);
+    });
+  });
+
+  init();
+</script>
+</body>
+</html>
