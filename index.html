@@ -49,6 +49,32 @@
       gap: 8px;
       margin-bottom: 20px;
       flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .shift-wrap {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: auto;
+      font-size: 0.78rem;
+      color: #64748b;
+    }
+
+    .shift-wrap input {
+      width: 64px;
+      background: #1e2330;
+      border: 1px solid #2a3147;
+      color: #e2e8f0;
+      padding: 5px 8px;
+      border-radius: 6px;
+      font-size: 0.78rem;
+      text-align: center;
+      outline: none;
+    }
+
+    .shift-wrap input:focus {
+      border-color: #2563eb;
     }
 
     .btn {
@@ -143,9 +169,13 @@
     <div class="controls">
       <button class="btn" data-days="30">30D</button>
       <button class="btn" data-days="90">90D</button>
-      <button class="btn active" data-days="180">6M</button>
+      <button class="btn" data-days="180">6M</button>
       <button class="btn" data-days="365">1Y</button>
-      <button class="btn" data-days="0">All</button>
+      <button class="btn active" data-days="0">All</button>
+      <div class="shift-wrap">
+        <span>BTC lead days:</span>
+        <input type="number" id="shift-input" value="100" min="0" max="500" title="BTC date is shifted left by this many days on the x-axis" />
+      </div>
     </div>
 
     <div class="legend">
@@ -168,16 +198,19 @@
     <p class="error-msg" id="error-msg"></p>
   </div>
 
-  <p class="footer">Prices are daily close. BTC left axis &mdash; XAU right axis. Data from Binance public API.</p>
+  <p class="footer">Prices are daily close. BTC left axis &mdash; XAU right axis. "BTC lead days" shifts BTC left on the x-axis to align it with XAU N days earlier. Data from Binance public API.</p>
 
 <script>
-  const BTC_URL = 'https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=1000';
-  const XAU_URL = 'https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=1d&limit=1000';
+  const BTC_URL = 'https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=200';
+  const XAU_URL = 'https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=1d&limit=100';
+
+  const DAY_MS = 86400000;
 
   let allBtc = [];
   let allXau = [];
   let chart = null;
-  let activeDays = 180;
+  let activeDays = 0;
+  let shiftDays = 100; // BTC leads XAU by this many days
 
   async function fetchKlines(url) {
     const res = await fetch(url);
@@ -186,18 +219,22 @@
     return data.map(k => ({ t: k[0], close: parseFloat(k[4]) }));
   }
 
-  function filterByDays(data, days) {
-    if (!days) return data;
-    const cutoff = Date.now() - days * 86400000;
-    return data.filter(d => d.t >= cutoff);
-  }
-
   function buildDatasets(days) {
-    const btc = filterByDays(allBtc, days);
-    const xau = filterByDays(allXau, days);
+    const shiftMs = shiftDays * DAY_MS;
+    const cutoff = days ? Date.now() - days * DAY_MS : 0;
+
+    // XAU: reference axis, no shift
+    const xauFiltered = allXau.filter(d => !cutoff || d.t >= cutoff);
+
+    // BTC: shift timestamps back by shiftDays so BTC day (X) appears at (X - shift) on x-axis
+    // That means BTC from 31/1 with shift=30 shows at 1/1, aligning with XAU's 1/1
+    const btcFiltered = allBtc
+      .map(d => ({ shiftedT: d.t - shiftMs, actualT: d.t, close: d.close }))
+      .filter(d => !cutoff || d.shiftedT >= cutoff);
+
     return {
-      btc: btc.map(d => ({ x: d.t, y: d.close })),
-      xau: xau.map(d => ({ x: d.t, y: d.close })),
+      btc: btcFiltered.map(d => ({ x: d.shiftedT, y: d.close, actualDate: d.actualT })),
+      xau: xauFiltered.map(d => ({ x: d.t, y: d.close })),
     };
   }
 
@@ -248,12 +285,18 @@
             padding: 12,
             callbacks: {
               title: items => {
+                // x-axis date = XAU's actual date (the reference)
                 const d = new Date(items[0].parsed.x);
-                return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+                return 'XAU date: ' + d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
               },
               label: item => {
                 const v = item.parsed.y;
-                return ` ${item.dataset.label}: $${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                const price = '$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                if (item.datasetIndex === 0 && item.raw && item.raw.actualDate) {
+                  const actual = new Date(item.raw.actualDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                  return ` BTC (actual: ${actual}): ${price}`;
+                }
+                return ` ${item.dataset.label}: ${price}`;
               },
             },
           },
@@ -290,8 +333,8 @@
     });
   }
 
-  function updateChart(days) {
-    const { btc, xau } = buildDatasets(days);
+  function updateChart() {
+    const { btc, xau } = buildDatasets(activeDays);
     chart.data.datasets[0].data = btc;
     chart.data.datasets[1].data = xau;
     chart.update('active');
@@ -331,8 +374,17 @@
       document.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       activeDays = parseInt(btn.dataset.days, 10);
-      updateChart(activeDays);
+      updateChart();
     });
+  });
+
+  const shiftInput = document.getElementById('shift-input');
+  shiftInput.addEventListener('change', () => {
+    const v = parseInt(shiftInput.value, 10);
+    if (!isNaN(v) && v >= 0) {
+      shiftDays = v;
+      if (chart) updateChart();
+    }
   });
 
   init();
