@@ -193,7 +193,7 @@
     <p class="error-msg" id="error-msg"></p>
   </div>
 
-  <p class="footer">Prices are daily close. BTC left axis &mdash; XAU right axis. "BTC lead days" (N): chart shows the oldest N BTC candles (out of 200) alongside the most recent 100 XAU candles. Data from Binance public API.</p>
+  <p class="footer">Both lines normalized to % change from their start price. "BTC lead days" (N): oldest N of 200 BTC candles vs most recent 100 XAU candles. Data from Binance public API.</p>
 
 <script>
   const BTC_URL = 'https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=200';
@@ -215,9 +215,11 @@
     // BTC: oldest leadDays items out of the 200 fetched (the earlier period)
     const btcSlice = allBtc.slice(0, leadDays);
     // XAU: all 100 items (the recent period)
+    const btcBase = btcSlice[0].close;
+    const xauBase = allXau[0].close;
     return {
-      btc: btcSlice.map(d => ({ x: d.t, y: d.close })),
-      xau: allXau.map(d => ({ x: d.t, y: d.close })),
+      btc: btcSlice.map(d => ({ x: d.t, y: (d.close / btcBase - 1) * 100, price: d.close })),
+      xau: allXau.map(d => ({ x: d.t, y: (d.close / xauBase - 1) * 100, price: d.close })),
     };
   }
 
@@ -228,7 +230,7 @@
       data: {
         datasets: [
           {
-            label: 'BTC (USD)',
+            label: 'BTC',
             data: btcData,
             borderColor: '#f7931a',
             backgroundColor: 'rgba(247,147,26,0.06)',
@@ -237,10 +239,9 @@
             pointHoverRadius: 4,
             tension: 0.2,
             fill: true,
-            yAxisID: 'yBtc',
           },
           {
-            label: 'XAU/PAXG (USD)',
+            label: 'XAU',
             data: xauData,
             borderColor: '#ffd700',
             backgroundColor: 'rgba(255,215,0,0.04)',
@@ -249,7 +250,6 @@
             pointHoverRadius: 4,
             tension: 0.2,
             fill: true,
-            yAxisID: 'yXau',
           },
         ],
       },
@@ -272,8 +272,10 @@
                 return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
               },
               label: item => {
-                const v = item.parsed.y;
-                return ` ${item.dataset.label}: $${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                const pct = item.parsed.y.toFixed(2);
+                const price = item.raw.price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                const sign = item.parsed.y >= 0 ? '+' : '';
+                return ` ${item.dataset.label}: ${sign}${pct}%  ($${price})`;
               },
             },
           },
@@ -285,25 +287,15 @@
             grid: { color: '#1a1f2e' },
             ticks: { color: '#475569', maxTicksLimit: 10 },
           },
-          yBtc: {
+          y: {
             type: 'linear',
             position: 'left',
             grid: { color: '#1a1f2e' },
             ticks: {
-              color: '#f7931a',
-              callback: v => '$' + (v >= 1000 ? (v / 1000).toFixed(0) + 'k' : v),
+              color: '#94a3b8',
+              callback: v => (v >= 0 ? '+' : '') + v.toFixed(0) + '%',
             },
-            title: { display: true, text: 'BTC (USD)', color: '#f7931a', font: { size: 11 } },
-          },
-          yXau: {
-            type: 'linear',
-            position: 'right',
-            grid: { drawOnChartArea: false },
-            ticks: {
-              color: '#ffd700',
-              callback: v => '$' + v.toLocaleString('en-US', { maximumFractionDigits: 0 }),
-            },
-            title: { display: true, text: 'XAU (USD)', color: '#ffd700', font: { size: 11 } },
+            title: { display: true, text: '% change from start', color: '#94a3b8', font: { size: 11 } },
           },
         },
       },
@@ -319,15 +311,16 @@
   }
 
   function updateLatestPrices() {
-    if (allBtc.length) {
-      const last = allBtc[allBtc.length - 1].close;
-      document.getElementById('btc-price').textContent =
-        '$' + last.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const btcSlice = allBtc.slice(0, leadDays);
+    if (btcSlice.length) {
+      const pct = ((btcSlice[btcSlice.length - 1].close / btcSlice[0].close - 1) * 100).toFixed(2);
+      const sign = pct >= 0 ? '+' : '';
+      document.getElementById('btc-price').textContent = `${sign}${pct}%`;
     }
     if (allXau.length) {
-      const last = allXau[allXau.length - 1].close;
-      document.getElementById('xau-price').textContent =
-        '$' + last.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const pct = ((allXau[allXau.length - 1].close / allXau[0].close - 1) * 100).toFixed(2);
+      const sign = pct >= 0 ? '+' : '';
+      document.getElementById('xau-price').textContent = `${sign}${pct}%`;
     }
   }
 
