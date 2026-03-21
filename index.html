@@ -365,9 +365,17 @@
     }
   }
 
-  ['xau-start', 'btc-limit', 'lead-days', 'xau-limit', 'btc-extra'].forEach(id =>
-    document.getElementById(id).addEventListener('change', () => init())
-  );
+  const INPUT_IDS = ['xau-start', 'btc-limit', 'lead-days', 'xau-limit', 'btc-extra'];
+
+  INPUT_IDS.forEach(id => {
+    const el = document.getElementById(id);
+    const saved = localStorage.getItem('chart_' + id);
+    if (saved !== null) el.value = saved;
+    el.addEventListener('change', () => {
+      localStorage.setItem('chart_' + id, el.value);
+      init();
+    });
+  });
 
   init();
 </script>
